@@ -15,6 +15,19 @@ except ModuleNotFoundError as exc:
         "Streamlit is required to run this app. Install it with: pip install streamlit"
     ) from exc
 
+from streamlit.errors import StreamlitSecretNotFoundError
+
+from src.auth import (
+    SupabaseAuthError,
+    SupabaseConfigurationError,
+    request_password_reset,
+    sign_in,
+    sign_out,
+    sign_up,
+    update_password,
+    validate_supabase_config,
+    verify_recovery_code,
+)
 from src.data_loader import load_dataset
 from src.data_profiler import profile_dataset
 from src.data_quality import run_quality_checks
@@ -32,6 +45,263 @@ ACCENT = "#48D7B0"
 CHART_BACKGROUND = "#101D2D"
 CHART_TEXT = "#C7D4E0"
 CHART_GRID = "#29394D"
+
+AUTH_TOKEN_KEY = "supabase_access_token"
+AUTH_EMAIL_KEY = "supabase_user_email"
+
+
+def get_supabase_config():
+    try:
+        secret = st.secrets.get("supabase")
+    except StreamlitSecretNotFoundError:
+        return None
+    return validate_supabase_config(secret)
+
+
+def show_auth_notice():
+    notice = st.session_state.pop("auth_notice", None)
+    if notice:
+        level, message = notice
+        if level == "success":
+            st.success(message)
+        else:
+            st.warning(message)
+
+
+def render_auth_setup():
+    st.caption("DATA INTELLIGENCE WORKSPACE")
+    st.title("Secure your workspace", icon=":material/lock:")
+    st.write(
+        "Sign-in is not configured yet. Add your Supabase project credentials "
+        "to Streamlit secrets to enable public account registration."
+    )
+    st.code(
+        '[supabase]\n'
+        'url = "https://YOUR_PROJECT.supabase.co"\n'
+        'anon_key = "YOUR_SUPABASE_PUBLISHABLE_OR_ANON_KEY"',
+        language="toml",
+    )
+    st.caption(
+        "Add these values in Streamlit Community Cloud → App settings → Secrets. "
+        "Never commit credentials or share them in chat."
+    )
+
+
+def _store_auth_session(response, email):
+    access_token = response.get("access_token")
+    if not access_token:
+        return False
+    st.session_state[AUTH_TOKEN_KEY] = access_token
+    user = response.get("user") or {}
+    st.session_state[AUTH_EMAIL_KEY] = user.get("email") or email
+    return True
+
+
+def _normalize_auth_email(email):
+    return email.strip()
+
+
+def render_auth_screen(config):
+    show_auth_notice()
+    st.caption("DATA INTELLIGENCE WORKSPACE")
+    st.title("Welcome to Datalens", icon=":material/insights:")
+    st.write("Sign in or create an account to open your private analysis session.")
+
+    left, center, right = st.columns([1, 1.35, 1])
+    with center:
+        with st.container(border=True):
+            sign_in_tab, sign_up_tab, reset_tab = st.tabs(
+                ["Sign in", "Create account", "Reset password"]
+            )
+
+            with sign_in_tab:
+                with st.form("supabase_sign_in"):
+                    email = st.text_input("Email", autocomplete="email")
+                    password = st.text_input(
+                        "Password",
+                        type="password",
+                        autocomplete="current-password",
+                    )
+                    submitted = st.form_submit_button(
+                        "Sign in",
+                        type="primary",
+                        width="stretch",
+                    )
+                if submitted:
+                    email = _normalize_auth_email(email)
+                    if not email or not password:
+                        st.error("Enter both your email and password.")
+                    else:
+                        try:
+                            response = sign_in(config, email, password)
+                        except SupabaseAuthError as exc:
+                            st.error(f"Could not sign in: {exc}")
+                        else:
+                            if _store_auth_session(response, email):
+                                st.rerun()
+                            st.error(
+                                "Sign-in did not return an active session. "
+                                "Confirm your email address and try again."
+                            )
+
+            with sign_up_tab:
+                with st.form("supabase_sign_up"):
+                    email = st.text_input(
+                        "Email",
+                        key="sign_up_email",
+                        autocomplete="email",
+                    )
+                    password = st.text_input(
+                        "Create a password",
+                        key="sign_up_password",
+                        type="password",
+                        autocomplete="new-password",
+                    )
+                    confirm_password = st.text_input(
+                        "Confirm password",
+                        type="password",
+                        autocomplete="new-password",
+                    )
+                    submitted = st.form_submit_button(
+                        "Create account",
+                        type="primary",
+                        width="stretch",
+                    )
+                if submitted:
+                    email = _normalize_auth_email(email)
+                    if not email or not password:
+                        st.error("Enter an email address and password.")
+                    elif len(password) < 8:
+                        st.error("Choose a password with at least 8 characters.")
+                    elif password != confirm_password:
+                        st.error("The passwords do not match.")
+                    else:
+                        try:
+                            response = sign_up(config, email, password)
+                        except SupabaseAuthError as exc:
+                            st.error(f"Could not create your account: {exc}")
+                        else:
+                            if _store_auth_session(response, email):
+                                st.rerun()
+                            st.success(
+                                "Account created. Check your email for a "
+                                "confirmation link, then sign in."
+                            )
+
+            with reset_tab:
+                st.caption(
+                    "We’ll send a recovery code if an account exists for that email."
+                )
+                with st.form("supabase_password_reset"):
+                    email = st.text_input(
+                        "Account email",
+                        key="reset_email",
+                        autocomplete="email",
+                    )
+                    submitted = st.form_submit_button(
+                        "Send reset link",
+                        width="stretch",
+                    )
+                if submitted:
+                    email = _normalize_auth_email(email)
+                    if not email:
+                        st.error("Enter your account email.")
+                    else:
+                        try:
+                            request_password_reset(config, email)
+                        except SupabaseAuthError as exc:
+                            st.error(f"Could not request a reset link: {exc}")
+                        else:
+                            st.session_state["reset_pending_email"] = email
+                            st.success(
+                                "If an account exists for that email, "
+                                "a recovery code is on its way."
+                            )
+
+                pending_email = st.session_state.get("reset_pending_email")
+                if pending_email:
+                    st.caption(f"Enter the recovery code sent to {pending_email}.")
+                    with st.form("supabase_reset_password"):
+                        recovery_code = st.text_input(
+                            "Recovery code",
+                            type="password",
+                            autocomplete="one-time-code",
+                        )
+                        new_password = st.text_input(
+                            "New password",
+                            type="password",
+                            autocomplete="new-password",
+                        )
+                        confirm_password = st.text_input(
+                            "Confirm new password",
+                            type="password",
+                            key="reset_confirm_password",
+                            autocomplete="new-password",
+                        )
+                        submitted = st.form_submit_button(
+                            "Set new password",
+                            type="primary",
+                            width="stretch",
+                        )
+                    if submitted:
+                        if not recovery_code:
+                            st.error("Enter the recovery code from your email.")
+                        elif len(new_password) < 8:
+                            st.error(
+                                "Choose a password with at least 8 characters."
+                            )
+                        elif new_password != confirm_password:
+                            st.error("The passwords do not match.")
+                        else:
+                            try:
+                                recovery_session = verify_recovery_code(
+                                    config,
+                                    pending_email,
+                                    recovery_code,
+                                )
+                                recovery_token = recovery_session.get(
+                                    "access_token"
+                                )
+                                if not recovery_token:
+                                    raise SupabaseAuthError(
+                                        "The recovery code did not return a session."
+                                    )
+                                update_password(
+                                    config,
+                                    recovery_token,
+                                    new_password,
+                                )
+                            except SupabaseAuthError as exc:
+                                st.error(f"Could not update your password: {exc}")
+                            else:
+                                st.session_state.pop("reset_pending_email", None)
+                                st.success(
+                                    "Your password has been updated. "
+                                    "You can now sign in."
+                                )
+
+
+def render_account_controls(config):
+    email = st.session_state.get(AUTH_EMAIL_KEY, "")
+    with st.sidebar:
+        st.caption("SIGNED IN")
+        st.text(email)
+        if st.button("Sign out", icon=":material/logout:", width="stretch"):
+            try:
+                sign_out(config, st.session_state.get(AUTH_TOKEN_KEY, ""))
+            except SupabaseAuthError as exc:
+                st.session_state["auth_notice"] = (
+                    "warning",
+                    f"Your local session ended, but Supabase sign-out failed: {exc}",
+                )
+            else:
+                st.session_state["auth_notice"] = (
+                    "success",
+                    "You have been signed out.",
+                )
+            st.session_state.pop(AUTH_TOKEN_KEY, None)
+            st.session_state.pop(AUTH_EMAIL_KEY, None)
+            st.rerun()
 
 
 def load_data_from_source(uploaded_file):
@@ -345,6 +615,21 @@ def render_modeling(data):
 
 
 def main():
+    try:
+        config = get_supabase_config()
+    except SupabaseConfigurationError as exc:
+        st.error(f"Supabase authentication is misconfigured: {exc}")
+        return
+
+    if config is None:
+        render_auth_setup()
+        return
+
+    if not st.session_state.get(AUTH_TOKEN_KEY):
+        render_auth_screen(config)
+        return
+
+    render_account_controls(config)
     uploaded_file = render_brand_sidebar()
     data = load_data_from_source(uploaded_file)
     render_sidebar_status(data, uploaded_file)
