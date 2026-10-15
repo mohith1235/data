@@ -12,7 +12,7 @@ A lightweight data intelligence platform for analyzing datasets, checking qualit
 - Descriptive statistics
 - Histogram, box plot, and correlation visualizations
 - Regression model training and comparison
-- Supabase email/password accounts with password recovery
+- Supabase-backed user ID and password accounts
 - Streamlit dashboard for interactive use
 
 ## Project structure
@@ -60,10 +60,14 @@ Or use the desktop launcher:
 
 ## Configure public account sign-in
 
-The dashboard uses Supabase Auth for email/password registration, sign-in, and
-password recovery. See [DEPLOY.md](DEPLOY.md) for Supabase setup and Streamlit
-Cloud Secrets configuration. Uploaded CSV files remain in the current Streamlit
-session and are not saved to user accounts.
+The dashboard uses Supabase Auth for user ID and password registration and
+sign-in, without collecting email addresses. See [DEPLOY.md](DEPLOY.md) for
+Supabase setup and Streamlit Cloud Secrets configuration. Password recovery
+requires an administrator, and uploaded CSV files remain in the current
+Streamlit session rather than being saved to user accounts.
+
+User IDs are 3-32 characters, case-insensitive, and may contain letters,
+numbers, underscores, or hyphens. Passwords must contain at least 8 characters.
 
 ## Sample dataset
 

@@ -20,13 +20,11 @@ from streamlit.errors import StreamlitSecretNotFoundError
 from src.auth import (
     SupabaseAuthError,
     SupabaseConfigurationError,
-    request_password_reset,
+    normalize_username,
     sign_in,
     sign_out,
     sign_up,
-    update_password,
     validate_supabase_config,
-    verify_recovery_code,
 )
 from src.data_loader import load_dataset
 from src.data_profiler import profile_dataset
@@ -47,7 +45,7 @@ CHART_TEXT = "#C7D4E0"
 CHART_GRID = "#29394D"
 
 AUTH_TOKEN_KEY = "supabase_access_token"
-AUTH_EMAIL_KEY = "supabase_user_email"
+AUTH_ID_KEY = "supabase_user_id"
 
 
 def get_supabase_config():
@@ -73,7 +71,11 @@ def render_auth_setup():
     st.title("Secure your workspace", icon=":material/lock:")
     st.write(
         "Sign-in is not configured yet. Add your Supabase project credentials "
-        "to Streamlit secrets to enable public account registration."
+        "to Streamlit secrets to enable ID and password accounts."
+    )
+    st.caption(
+        "Supabase uses a private, non-deliverable internal identity behind each "
+        "user ID. No email address is collected."
     )
     st.code(
         '[supabase]\n'
@@ -83,40 +85,39 @@ def render_auth_setup():
     )
     st.caption(
         "Add these values in Streamlit Community Cloud → App settings → Secrets. "
-        "Never commit credentials or share them in chat."
+        "Disable Confirm Email in Supabase Auth settings. Never commit credentials "
+        "or share them in chat."
     )
 
 
-def _store_auth_session(response, email):
+def _store_auth_session(response, username):
     access_token = response.get("access_token")
     if not access_token:
         return False
     st.session_state[AUTH_TOKEN_KEY] = access_token
-    user = response.get("user") or {}
-    st.session_state[AUTH_EMAIL_KEY] = user.get("email") or email
+    st.session_state[AUTH_ID_KEY] = username
     return True
-
-
-def _normalize_auth_email(email):
-    return email.strip()
 
 
 def render_auth_screen(config):
     show_auth_notice()
     st.caption("DATA INTELLIGENCE WORKSPACE")
     st.title("Welcome to Datalens", icon=":material/insights:")
-    st.write("Sign in or create an account to open your private analysis session.")
+    st.write("Sign in with your ID and password to open your analysis workspace.")
 
-    left, center, right = st.columns([1, 1.35, 1])
+    _, center, _ = st.columns([1, 1.35, 1])
     with center:
         with st.container(border=True):
-            sign_in_tab, sign_up_tab, reset_tab = st.tabs(
-                ["Sign in", "Create account", "Reset password"]
+            sign_in_tab, sign_up_tab = st.tabs(
+                ["Sign in", "Create account"]
             )
 
             with sign_in_tab:
                 with st.form("supabase_sign_in"):
-                    email = st.text_input("Email", autocomplete="email")
+                    username = st.text_input(
+                        "User ID",
+                        autocomplete="username",
+                    )
                     password = st.text_input(
                         "Password",
                         type="password",
@@ -128,28 +129,35 @@ def render_auth_screen(config):
                         width="stretch",
                     )
                 if submitted:
-                    email = _normalize_auth_email(email)
-                    if not email or not password:
-                        st.error("Enter both your email and password.")
+                    try:
+                        username = normalize_username(username)
+                    except SupabaseAuthError as exc:
+                        st.error(str(exc))
                     else:
-                        try:
-                            response = sign_in(config, email, password)
-                        except SupabaseAuthError as exc:
-                            st.error(f"Could not sign in: {exc}")
+                        if not password:
+                            st.error("Enter your password.")
                         else:
-                            if _store_auth_session(response, email):
-                                st.rerun()
-                            st.error(
-                                "Sign-in did not return an active session. "
-                                "Confirm your email address and try again."
-                            )
+                            try:
+                                response = sign_in(config, username, password)
+                            except SupabaseAuthError as exc:
+                                st.error(f"Could not sign in: {exc}")
+                            else:
+                                if _store_auth_session(response, username):
+                                    st.rerun()
+                                st.error(
+                                    "Sign-in did not return an active session."
+                                )
 
             with sign_up_tab:
                 with st.form("supabase_sign_up"):
-                    email = st.text_input(
-                        "Email",
-                        key="sign_up_email",
-                        autocomplete="email",
+                    username = st.text_input(
+                        "Choose a user ID",
+                        key="sign_up_username",
+                        autocomplete="username",
+                        help=(
+                            "3 to 32 characters: letters, numbers, underscores, "
+                            "or hyphens. User IDs are case-insensitive."
+                        ),
                     )
                     password = st.text_input(
                         "Create a password",
@@ -168,124 +176,39 @@ def render_auth_screen(config):
                         width="stretch",
                     )
                 if submitted:
-                    email = _normalize_auth_email(email)
-                    if not email or not password:
-                        st.error("Enter an email address and password.")
-                    elif len(password) < 8:
-                        st.error("Choose a password with at least 8 characters.")
-                    elif password != confirm_password:
-                        st.error("The passwords do not match.")
+                    try:
+                        username = normalize_username(username)
+                    except SupabaseAuthError as exc:
+                        st.error(str(exc))
                     else:
-                        try:
-                            response = sign_up(config, email, password)
-                        except SupabaseAuthError as exc:
-                            st.error(f"Could not create your account: {exc}")
-                        else:
-                            if _store_auth_session(response, email):
-                                st.rerun()
-                            st.success(
-                                "Account created. Check your email for a "
-                                "confirmation link, then sign in."
-                            )
-
-            with reset_tab:
-                st.caption(
-                    "We’ll send a recovery code if an account exists for that email."
-                )
-                with st.form("supabase_password_reset"):
-                    email = st.text_input(
-                        "Account email",
-                        key="reset_email",
-                        autocomplete="email",
-                    )
-                    submitted = st.form_submit_button(
-                        "Send reset link",
-                        width="stretch",
-                    )
-                if submitted:
-                    email = _normalize_auth_email(email)
-                    if not email:
-                        st.error("Enter your account email.")
-                    else:
-                        try:
-                            request_password_reset(config, email)
-                        except SupabaseAuthError as exc:
-                            st.error(f"Could not request a reset link: {exc}")
-                        else:
-                            st.session_state["reset_pending_email"] = email
-                            st.success(
-                                "If an account exists for that email, "
-                                "a recovery code is on its way."
-                            )
-
-                pending_email = st.session_state.get("reset_pending_email")
-                if pending_email:
-                    st.caption(f"Enter the recovery code sent to {pending_email}.")
-                    with st.form("supabase_reset_password"):
-                        recovery_code = st.text_input(
-                            "Recovery code",
-                            type="password",
-                            autocomplete="one-time-code",
-                        )
-                        new_password = st.text_input(
-                            "New password",
-                            type="password",
-                            autocomplete="new-password",
-                        )
-                        confirm_password = st.text_input(
-                            "Confirm new password",
-                            type="password",
-                            key="reset_confirm_password",
-                            autocomplete="new-password",
-                        )
-                        submitted = st.form_submit_button(
-                            "Set new password",
-                            type="primary",
-                            width="stretch",
-                        )
-                    if submitted:
-                        if not recovery_code:
-                            st.error("Enter the recovery code from your email.")
-                        elif len(new_password) < 8:
-                            st.error(
-                                "Choose a password with at least 8 characters."
-                            )
-                        elif new_password != confirm_password:
+                        if len(password) < 8:
+                            st.error("Choose a password with at least 8 characters.")
+                        elif password != confirm_password:
                             st.error("The passwords do not match.")
                         else:
                             try:
-                                recovery_session = verify_recovery_code(
-                                    config,
-                                    pending_email,
-                                    recovery_code,
-                                )
-                                recovery_token = recovery_session.get(
-                                    "access_token"
-                                )
-                                if not recovery_token:
-                                    raise SupabaseAuthError(
-                                        "The recovery code did not return a session."
-                                    )
-                                update_password(
-                                    config,
-                                    recovery_token,
-                                    new_password,
-                                )
+                                response = sign_up(config, username, password)
                             except SupabaseAuthError as exc:
-                                st.error(f"Could not update your password: {exc}")
+                                st.error(f"Could not create your account: {exc}")
                             else:
-                                st.session_state.pop("reset_pending_email", None)
-                                st.success(
-                                    "Your password has been updated. "
-                                    "You can now sign in."
+                                if _store_auth_session(response, username):
+                                    st.rerun()
+                                st.error(
+                                    "Account created, but Supabase did not return "
+                                    "a session. Disable Confirm Email in Supabase "
+                                    "Auth settings for ID-only accounts."
                                 )
+        st.caption(
+            "Forgot your password? Contact the app administrator to reset "
+            "your account. No email is collected for recovery."
+        )
 
 
 def render_account_controls(config):
-    email = st.session_state.get(AUTH_EMAIL_KEY, "")
+    username = st.session_state.get(AUTH_ID_KEY, "")
     with st.sidebar:
         st.caption("SIGNED IN")
-        st.text(email)
+        st.text(username)
         if st.button("Sign out", icon=":material/logout:", width="stretch"):
             try:
                 sign_out(config, st.session_state.get(AUTH_TOKEN_KEY, ""))
@@ -300,7 +223,7 @@ def render_account_controls(config):
                     "You have been signed out.",
                 )
             st.session_state.pop(AUTH_TOKEN_KEY, None)
-            st.session_state.pop(AUTH_EMAIL_KEY, None)
+            st.session_state.pop(AUTH_ID_KEY, None)
             st.rerun()
 
 
@@ -624,6 +547,12 @@ def main():
     if config is None:
         render_auth_setup()
         return
+
+    if (
+        st.session_state.get(AUTH_TOKEN_KEY)
+        and not st.session_state.get(AUTH_ID_KEY)
+    ):
+        st.session_state.pop(AUTH_TOKEN_KEY, None)
 
     if not st.session_state.get(AUTH_TOKEN_KEY):
         render_auth_screen(config)

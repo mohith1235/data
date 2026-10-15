@@ -11,13 +11,12 @@ from streamlit.testing.v1 import AppTest
 from src.auth import (
     SupabaseAuthError,
     SupabaseConfigurationError,
-    request_password_reset,
+    INTERNAL_AUTH_DOMAIN,
+    normalize_username,
     sign_in,
     sign_out,
     sign_up,
-    update_password,
     validate_supabase_config,
-    verify_recovery_code,
 )
 
 
@@ -43,7 +42,7 @@ class SupabaseAuthTests(unittest.TestCase):
 
     @patch("src.auth.urlopen", return_value=io.BytesIO(b'{"access_token":"token"}'))
     def test_sign_in_sends_password_grant_request(self, urlopen_mock):
-        response = sign_in(self.config, "user@example.com", "password")
+        response = sign_in(self.config, "Test_User", "password")
 
         self.assertEqual(response, {"access_token": "token"})
         request = urlopen_mock.call_args.args[0]
@@ -55,46 +54,35 @@ class SupabaseAuthTests(unittest.TestCase):
         self.assertEqual(request.get_header("Apikey"), "test-anon-key")
         self.assertEqual(
             json.loads(request.data),
-            {"email": "user@example.com", "password": "password"},
-        )
-
-    @patch("src.auth.urlopen", return_value=io.BytesIO(b"{}"))
-    def test_sign_up_uses_email_and_password(self, urlopen_mock):
-        sign_up(self.config, "user@example.com", "password")
-
-        request = urlopen_mock.call_args.args[0]
-        self.assertTrue(request.full_url.endswith("/auth/v1/signup"))
-
-    @patch("src.auth.urlopen", return_value=io.BytesIO(b"{}"))
-    def test_password_recovery_requests_email_code(self, urlopen_mock):
-        request_password_reset(self.config, "user@example.com")
-
-        request = urlopen_mock.call_args.args[0]
-        self.assertTrue(request.full_url.endswith("/auth/v1/recover"))
-
-    @patch("src.auth.urlopen", return_value=io.BytesIO(b'{"access_token":"recovery"}'))
-    def test_recovery_code_is_verified(self, urlopen_mock):
-        verify_recovery_code(self.config, "user@example.com", "123456")
-
-        request = urlopen_mock.call_args.args[0]
-        self.assertTrue(request.full_url.endswith("/auth/v1/verify"))
-        self.assertEqual(
-            json.loads(request.data),
             {
-                "type": "recovery",
-                "email": "user@example.com",
-                "token": "123456",
+                "email": f"test_user@{INTERNAL_AUTH_DOMAIN}",
+                "password": "password",
             },
         )
 
     @patch("src.auth.urlopen", return_value=io.BytesIO(b"{}"))
-    def test_password_update_uses_authenticated_put(self, urlopen_mock):
-        update_password(self.config, "recovery-token", "new-password")
+    def test_sign_up_maps_username_to_internal_email(self, urlopen_mock):
+        sign_up(self.config, "Test_User", "password")
 
         request = urlopen_mock.call_args.args[0]
-        self.assertTrue(request.full_url.endswith("/auth/v1/user"))
-        self.assertEqual(request.get_method(), "PUT")
-        self.assertEqual(request.get_header("Authorization"), "Bearer recovery-token")
+        self.assertTrue(request.full_url.endswith("/auth/v1/signup"))
+        self.assertEqual(
+            json.loads(request.data),
+            {
+                "email": f"test_user@{INTERNAL_AUTH_DOMAIN}",
+                "password": "password",
+                "data": {"username": "test_user"},
+            },
+        )
+
+    def test_username_is_case_insensitive(self):
+        self.assertEqual(normalize_username("  Test_User "), "test_user")
+
+    def test_username_rejects_invalid_characters_and_lengths(self):
+        for username in ("ab", "starts with space", "has.dot", "x" * 33):
+            with self.subTest(username=username):
+                with self.assertRaises(SupabaseAuthError):
+                    normalize_username(username)
 
     @patch("src.auth.urlopen", return_value=io.BytesIO(b""))
     def test_sign_out_uses_authenticated_session(self, urlopen_mock):
@@ -119,7 +107,7 @@ class SupabaseAuthTests(unittest.TestCase):
             SupabaseAuthError,
             "Invalid login credentials",
         ):
-            sign_in(self.config, "user@example.com", "wrong-password")
+            sign_in(self.config, "test_user", "wrong-password")
 
     @patch(
         "src.auth.urlopen",
@@ -130,7 +118,7 @@ class SupabaseAuthTests(unittest.TestCase):
             SupabaseAuthError,
             r"Could not resolve Supabase host `example\.supabase\.co`",
         ):
-            sign_in(self.config, "user@example.com", "password")
+            sign_in(self.config, "test_user", "password")
 
 
 class AuthenticationScreenTests(unittest.TestCase):
@@ -150,7 +138,20 @@ class AuthenticationScreenTests(unittest.TestCase):
         self.assertFalse(app.exception)
         self.assertEqual(
             [tab.label for tab in app.tabs],
-            ["Sign in", "Create account", "Reset password"],
+            ["Sign in", "Create account"],
+        )
+        self.assertEqual(
+            [field.label for field in app.text_input],
+            [
+                "User ID",
+                "Password",
+                "Choose a user ID",
+                "Create a password",
+                "Confirm password",
+            ],
+        )
+        self.assertFalse(
+            any("email" in field.label.lower() for field in app.text_input)
         )
 
     def test_missing_credentials_shows_setup_instructions(self):

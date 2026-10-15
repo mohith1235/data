@@ -38,10 +38,13 @@ exploration, and modeling features.
 ## Supabase accounts
 
 1. Create a Supabase project on the free tier.
-2. In **Authentication → Providers → Email**, enable email/password sign-up and
-   configure email confirmation as desired.
-3. In **Authentication → URL Configuration**, set the site URL to
-   `https://dataintelligence.streamlit.app` and allow that URL for redirects.
+2. In **Authentication → Providers → Email**, enable email/password sign-up.
+   Disable **Confirm Email**. Supabase requires an email-shaped internal identity
+   for password authentication; the app maps each user ID to a private
+   non-deliverable address at `users.dataintelligence.invalid`. Users do not enter
+   or receive email.
+3. If you configure authentication redirect URLs, set the site URL to
+   `https://dataintelligence.streamlit.app`.
 4. In the Supabase project's **API Keys** settings, copy the project URL and its
    publishable key (or legacy anon key). Do not use the `service_role` or secret
    key in this app.
@@ -56,11 +59,13 @@ exploration, and modeling features.
    A placeholder template is available at
    `.streamlit/secrets.toml.example`. Never commit the populated
    `.streamlit/secrets.toml` file or share credentials in chat.
-6. To enable password recovery codes, edit the Supabase **Authentication → Email
-   Templates → Reset Password** template and include `{{ .Token }}` in the
-   message. Users request a code in the app, then enter it with a new password.
-7. If email confirmation is enabled, users must confirm their address from the
-   email before signing in.
+6. Users choose a 3-32 character ID using letters, numbers, underscores, or
+   hyphens and a password with at least 8 characters. IDs are case-insensitive.
+7. There is no email-based password reset. If someone forgets a password, the
+   project administrator must reset their account through a trusted Supabase
+   admin workflow. Never put the Supabase service-role key in this app.
+8. Accounts created previously with real email addresses are not automatically
+   converted to user IDs.
 
 Account credentials are handled by Supabase Auth. Uploaded CSV files and
 analysis results remain session-only; this app does not persist user datasets.

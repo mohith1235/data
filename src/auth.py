@@ -1,4 +1,5 @@
 import json
+import re
 import socket
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlsplit
@@ -11,6 +12,24 @@ class SupabaseAuthError(Exception):
 
 class SupabaseConfigurationError(Exception):
     """Raised when the Supabase project configuration is invalid."""
+
+
+USERNAME_PATTERN = re.compile(r"^[a-z0-9][a-z0-9_-]{2,31}$")
+INTERNAL_AUTH_DOMAIN = "users.dataintelligence.invalid"
+
+
+def normalize_username(username):
+    normalized = username.strip().lower()
+    if not USERNAME_PATTERN.fullmatch(normalized):
+        raise SupabaseAuthError(
+            "User ID must be 3 to 32 characters, start with a letter or number, "
+            "and contain only letters, numbers, underscores, or hyphens."
+        )
+    return normalized
+
+
+def _username_auth_email(username):
+    return f"{normalize_username(username)}@{INTERNAL_AUTH_DOMAIN}"
 
 
 def validate_supabase_config(config):
@@ -97,41 +116,27 @@ def _request(config, endpoint, payload, access_token=None, method="POST"):
         ) from exc
 
 
-def sign_up(config, email, password):
+def sign_up(config, username, password):
+    normalized_username = normalize_username(username)
     return _request(
         config,
         "signup",
-        {"email": email, "password": password},
+        {
+            "email": _username_auth_email(normalized_username),
+            "password": password,
+            "data": {"username": normalized_username},
+        },
     )
 
 
-def sign_in(config, email, password):
+def sign_in(config, username, password):
     return _request(
         config,
         "token?grant_type=password",
-        {"email": email, "password": password},
-    )
-
-
-def request_password_reset(config, email):
-    return _request(config, "recover", {"email": email})
-
-
-def verify_recovery_code(config, email, token):
-    return _request(
-        config,
-        "verify",
-        {"type": "recovery", "email": email, "token": token},
-    )
-
-
-def update_password(config, access_token, password):
-    return _request(
-        config,
-        "user",
-        {"password": password},
-        access_token=access_token,
-        method="PUT",
+        {
+            "email": _username_auth_email(username),
+            "password": password,
+        },
     )
 
 
