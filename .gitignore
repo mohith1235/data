@@ -1,0 +1,20 @@
+# Virtual environment
+.venv/
+venv/
+
+# Python cache
+__pycache__/
+*.py[cod]
+
+# Environment files
+.env
+.streamlit/config.toml
+.streamlit/secrets.toml
+
+# Local datasets and generated artifacts
+data/*.csv
+models/*.joblib
+reports/*
+docs/*.pdf
+eda_run_output.txt
+probe.txt
