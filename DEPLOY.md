@@ -28,3 +28,9 @@ If the repository name is `data-intelligence-system`, the public URL will be:
 ```text
 https://data-intelligence-system.streamlit.app
 ```
+
+## Uploading data
+
+The sample dataset is intentionally excluded from the public repository. After
+deployment, upload a CSV from the dashboard sidebar to use the overview, quality,
+exploration, and modeling features.

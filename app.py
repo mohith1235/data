@@ -7,6 +7,7 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import pandas as pd
 import seaborn as sns
+
 try:
     import streamlit as st
 except ModuleNotFoundError as exc:
@@ -20,43 +21,17 @@ from src.data_quality import run_quality_checks
 from src.ml_detector import detect_problem_type, suggest_target_columns
 
 
-st.set_page_config(page_title="Data Intelligence System", layout="wide")
-
-st.markdown(
-    """
-    <style>
-    html, body, [data-testid="stAppViewContainer"] {
-        background: #000000;
-        color: #f5f5f5;
-    }
-    .stApp {
-        background: #000000;
-        color: #f5f5f5;
-    }
-    div[data-testid="stTabs"] button {
-        font-weight: 600;
-        background: #111111;
-        color: #f5f5f5;
-        border: 1px solid #333333;
-        border-radius: 8px 8px 0 0;
-    }
-    .block-container {
-        padding-top: 1.5rem;
-        padding-bottom: 2rem;
-    }
-    div[data-testid="stDataFrame"] {
-        background: #111111;
-    }
-    .stMetric {
-        background: #111111;
-        border: 1px solid #2d2d2d;
-        border-radius: 8px;
-        padding: 12px;
-    }
-    </style>
-    """,
-    unsafe_allow_html=True,
+st.set_page_config(
+    page_title="Data Intelligence",
+    page_icon=":material/insights:",
+    layout="wide",
+    initial_sidebar_state="expanded",
 )
+
+ACCENT = "#48D7B0"
+CHART_BACKGROUND = "#101D2D"
+CHART_TEXT = "#C7D4E0"
+CHART_GRID = "#29394D"
 
 
 def load_data_from_source(uploaded_file):
@@ -65,179 +40,348 @@ def load_data_from_source(uploaded_file):
 
     default_path = os.path.join("data", "students.csv")
     if os.path.exists(default_path):
-        loaded = load_dataset(default_path)
-        return loaded
+        return load_dataset(default_path)
 
-    st.error("No dataset found. Please upload a CSV file.")
     return None
+
+
+def render_brand_sidebar():
+    with st.sidebar:
+        st.markdown("### :material/insights: **DATALENS**")
+        st.caption("DATA INTELLIGENCE WORKSPACE")
+        st.markdown("#### Your dataset")
+        return st.file_uploader(
+            "Import a CSV file",
+            type=["csv"],
+            help="Your file is analyzed in this session.",
+        )
+
+
+def render_sidebar_status(data, uploaded_file):
+    with st.sidebar:
+        if data is not None:
+            source_name = (
+                uploaded_file.name if uploaded_file is not None else "Local dataset"
+            )
+            with st.container(border=True):
+                st.badge(
+                    "Dataset ready",
+                    icon=":material/check_circle:",
+                    color="green",
+                )
+                st.text(source_name)
+                st.caption(
+                    f"{len(data):,} rows · {len(data.columns):,} columns"
+                )
+        else:
+            st.caption(
+                "Upload a CSV to unlock your overview, data quality checks, "
+                "exploration, and modeling workspace."
+            )
+
+
+def render_welcome():
+    st.caption("DATA INTELLIGENCE WORKSPACE")
+    st.title("Make better decisions with your data.", icon=":material/insights:")
+    st.write(
+        "A calm, clear workspace to understand your data, surface quality issues, "
+        "and discover what matters."
+    )
+
+    with st.container(border=True):
+        st.subheader("Start with a dataset", icon=":material/upload_file:")
+        st.write(
+            "Choose a CSV in the sidebar. Your analysis will be ready as soon as "
+            "the file is loaded."
+        )
+
+    with st.container(horizontal=True):
+        with st.container(border=True):
+            st.markdown("**:material/space_dashboard: Understand**")
+            st.caption("See the shape and key statistics of your dataset.")
+        with st.container(border=True):
+            st.markdown("**:material/verified: Validate**")
+            st.caption("Check missing values, duplicates, and unusual columns.")
+        with st.container(border=True):
+            st.markdown("**:material/query_stats: Explore**")
+            st.caption("Visualize distributions and compare relationships.")
 
 
 def render_summary_cards(data):
     profile = profile_dataset(data)
     quality = run_quality_checks(data)
+    missing_total = int(quality["missing_values"].sum())
 
-    missing_total = int(sum(quality["missing_values"].values)) if not quality["missing_values"].empty else 0
-
-    metric_cols = st.columns(4)
-    metric_cols[0].metric("Rows", f"{profile['rows']:,}")
-    metric_cols[1].metric("Columns", profile["columns"])
-    metric_cols[2].metric("Missing values", missing_total)
-    metric_cols[3].metric("Numeric columns", len(profile["numerical_columns"]))
+    with st.container(horizontal=True):
+        st.metric("Records", f"{profile['rows']:,}", border=True)
+        st.metric("Features", profile["columns"], border=True)
+        st.metric("Missing values", missing_total, border=True)
+        st.metric(
+            "Numeric features",
+            len(profile["numerical_columns"]),
+            border=True,
+        )
 
 
 def render_overview(data):
-    st.subheader("Dataset overview")
+    st.header("At a glance", icon=":material/space_dashboard:")
+    st.caption("A high-level summary of the data you’re working with.")
     render_summary_cards(data)
-    st.dataframe(data.head(10), width="stretch")
 
-    numeric_summary = data.describe(include="number").T
-    st.subheader("Summary statistics")
-    st.dataframe(numeric_summary, width="stretch")
+    preview_col, summary_col = st.columns([1.2, 1])
+    with preview_col:
+        with st.container(border=True):
+            st.subheader("Data preview")
+            st.dataframe(data.head(10), width="stretch", hide_index=True)
+    with summary_col:
+        with st.container(border=True):
+            st.subheader("Summary statistics")
+            numeric_summary = data.describe(include="number").T
+            if numeric_summary.empty:
+                st.caption("No numeric features are available for summary.")
+            else:
+                st.dataframe(numeric_summary, width="stretch")
 
 
 def render_profile(data):
     profile = profile_dataset(data)
+    st.header("Dataset profile", icon=":material/table_chart:")
+    st.caption("Inspect column types, completeness, and dataset shape.")
 
-    c1, c2, c3 = st.columns(3)
-    c1.metric("Rows", profile["rows"])
-    c2.metric("Columns", profile["columns"])
-    c3.metric("Duplicate rows", profile["duplicate_rows"])
+    with st.container(horizontal=True):
+        st.metric("Rows", f"{profile['rows']:,}", border=True)
+        st.metric("Columns", profile["columns"], border=True)
+        st.metric("Duplicate rows", profile["duplicate_rows"], border=True)
 
-    profile_df = pd.DataFrame(profile["columns_info"])
-    st.dataframe(profile_df, width="stretch")
+    with st.container(border=True):
+        st.subheader("Column details")
+        st.dataframe(
+            pd.DataFrame(profile["columns_info"]),
+            width="stretch",
+            hide_index=True,
+        )
 
 
 def render_quality(data):
     report = run_quality_checks(data)
+    missing_values = report["missing_values"]
+    missing_df = pd.DataFrame(
+        {
+            "Column": list(missing_values.keys()),
+            "Missing values": list(missing_values.values),
+        }
+    )
+    missing_df = missing_df[missing_df["Missing values"] > 0]
 
-    missing_series = report["missing_values"]
-    missing_df = pd.DataFrame({
-        "Column": list(missing_series.keys()),
-        "Missing values": list(missing_series.values),
-    })
+    st.header("Data quality", icon=":material/verified:")
+    st.caption("Quick checks to help you trust what goes into your analysis.")
 
-    st.subheader("Missing values")
     if missing_df.empty:
-        st.success("No missing values detected")
+        st.success("No missing values detected.", icon=":material/check_circle:")
     else:
-        st.dataframe(missing_df, width="stretch")
+        with st.container(border=True):
+            st.subheader("Missing values")
+            st.dataframe(missing_df, width="stretch", hide_index=True)
 
-    st.subheader("Duplicates and constants")
-    col1, col2, col3 = st.columns(3)
-    col1.metric("Duplicate rows", report["duplicates"])
-    col2.metric("Constant columns", len(report["constant_columns"]))
-    col3.metric("High-cardinality columns", len(report["high_cardinality_columns"]))
+    with st.container(horizontal=True):
+        st.metric("Duplicate rows", report["duplicates"], border=True)
+        st.metric(
+            "Constant columns",
+            len(report["constant_columns"]),
+            border=True,
+        )
+        st.metric(
+            "High-cardinality columns",
+            len(report["high_cardinality_columns"]),
+            border=True,
+        )
 
     if report["constant_columns"]:
         st.warning(f"Constant columns: {report['constant_columns']}")
     if report["high_cardinality_columns"]:
         st.warning(f"High-cardinality columns: {report['high_cardinality_columns']}")
-
     if report["numeric_outliers"]:
-        st.warning(f"Potential outliers: {report['numeric_outliers']}")
+        st.warning(f"Potential numerical outliers: {report['numeric_outliers']}")
     else:
-        st.success("No potential numerical outliers detected")
+        st.success("No potential numerical outliers detected.")
+
+
+def style_chart_axes(axes):
+    for axis in axes:
+        axis.set_facecolor(CHART_BACKGROUND)
+        axis.tick_params(colors=CHART_TEXT)
+        axis.xaxis.label.set_color(CHART_TEXT)
+        axis.yaxis.label.set_color(CHART_TEXT)
+        axis.title.set_color("#F3F7FA")
+        axis.grid(color=CHART_GRID, linewidth=0.7, alpha=0.75)
+        axis.set_axisbelow(True)
+        for spine in axis.spines.values():
+            spine.set_color(CHART_GRID)
 
 
 def render_eda(data):
     numeric_cols = data.select_dtypes(include="number").columns.tolist()
 
+    st.header("Explore the data", icon=":material/query_stats:")
+    st.caption("Review feature distributions and relationships at a glance.")
+
     if not numeric_cols:
-        st.warning("No numeric columns to analyze")
+        st.warning("No numeric columns are available to visualize.")
         return
 
-    for col in numeric_cols:
-        fig, axes = plt.subplots(1, 2, figsize=(12, 4))
+    chart_columns = st.columns(2)
+    for index, column in enumerate(numeric_cols):
+        chart_column = chart_columns[index % 2]
+        with chart_column:
+            with st.container(border=True):
+                fig, axes = plt.subplots(1, 2, figsize=(10, 3.5))
+                fig.patch.set_facecolor(CHART_BACKGROUND)
 
-        sns.histplot(data[col], kde=True, ax=axes[0])
-        axes[0].set_title(f"Distribution of {col}")
-        axes[0].set_xlabel(col)
+                sns.histplot(
+                    data[column],
+                    kde=True,
+                    color=ACCENT,
+                    ax=axes[0],
+                )
+                axes[0].set_title(f"{column} distribution")
+                axes[0].set_xlabel(column)
 
-        sns.boxplot(x=data[col], ax=axes[1])
-        axes[1].set_title(f"Box plot of {col}")
-        axes[1].set_xlabel(col)
+                sns.boxplot(
+                    x=data[column],
+                    color="#8B9DFF",
+                    ax=axes[1],
+                )
+                axes[1].set_title(f"{column} range")
+                axes[1].set_xlabel(column)
 
+                style_chart_axes(axes)
+                st.pyplot(fig)
+                plt.close(fig)
+
+    with st.container(border=True):
+        st.subheader("Feature correlation")
+        fig, axis = plt.subplots(figsize=(8, 5))
+        fig.patch.set_facecolor(CHART_BACKGROUND)
+        heatmap = sns.heatmap(
+            data[numeric_cols].corr(),
+            annot=True,
+            cmap=sns.color_palette(
+                ["#172538", "#286F70", ACCENT],
+                as_cmap=True,
+            ),
+            fmt=".2f",
+            linewidths=0.5,
+            linecolor=CHART_GRID,
+            ax=axis,
+        )
+        colorbar = heatmap.collections[0].colorbar
+        colorbar.ax.tick_params(colors=CHART_TEXT)
+        colorbar.outline.set_edgecolor(CHART_GRID)
+        style_chart_axes([axis])
         st.pyplot(fig)
-
-    corr = data[numeric_cols].corr()
-    fig, ax = plt.subplots(figsize=(8, 6))
-    sns.heatmap(corr, annot=True, cmap="coolwarm", fmt=".2f", ax=ax)
-    ax.set_title("Correlation heatmap")
-    st.pyplot(fig)
+        plt.close(fig)
 
 
 def render_modeling(data):
+    st.header("Predictive modeling", icon=":material/online_prediction:")
+    st.caption("Compare regression models and select the best-performing fit.")
     candidate_targets = suggest_target_columns(data)
 
     if not candidate_targets:
-        st.warning("No suitable target column found for modeling.")
+        st.warning("No suitable target column was found for modeling.")
         return
 
-    target = st.selectbox("Choose a target column", candidate_targets)
-    problem_type = detect_problem_type(data, target)
+    with st.container(border=True):
+        target = st.selectbox("Choose a target column", candidate_targets)
+        problem_type = detect_problem_type(data, target)
+        st.caption(f"Detected problem type: **{problem_type}**")
 
-    st.info(f"Detected problem type: {problem_type}")
-
-    if problem_type != "regression":
-        st.warning("Classification modeling is not implemented in this version.")
-        return
-
-    if st.button("Train regression model"):
-        try:
-            from src.model_trainer import train_regression_models
-        except ImportError as exc:
-            st.error(
-                "Could not load the scikit-learn model trainer. Windows Application "
-                "Control may be blocking one of its native files. Ask your system "
-                "administrator to allow the installed scikit-learn package, then "
-                f"restart the app. Details: {exc}"
-            )
+        if problem_type != "regression":
+            st.warning("Classification modeling is not available yet.")
             return
 
-        result = train_regression_models(data, target)
+        train_clicked = st.button(
+            "Train regression models",
+            type="primary",
+            icon=":material/play_arrow:",
+        )
 
-        comparison_df = pd.DataFrame(result["comparison"])
-        st.subheader("Model comparison")
-        st.dataframe(comparison_df, width="stretch")
+    if not train_clicked:
+        return
 
-        st.subheader("Selected model")
-        st.success(f"Best model: {result['selected_model']} ({result['selection_metric']})")
-        st.write(f"Saved model path: {result['saved_model_path']}")
+    try:
+        from src.model_trainer import train_regression_models
+    except ImportError as exc:
+        st.error(
+            "Could not load the scikit-learn model trainer. Windows Application "
+            "Control may be blocking one of its native files. Ask your system "
+            "administrator to allow the installed scikit-learn package, then "
+            f"restart the app. Details: {exc}"
+        )
+        return
 
-        st.subheader("Detailed metrics")
+    result = train_regression_models(data, target)
+    st.subheader("Model comparison")
+    with st.container(border=True):
+        st.dataframe(
+            pd.DataFrame(result["comparison"]),
+            width="stretch",
+            hide_index=True,
+        )
+
+    st.subheader(f"Selected model · {result['selected_model']}")
+    st.caption(
+        f"Selected using {result['selection_metric']}. "
+        f"Saved to `{result['saved_model_path']}`."
+    )
+    with st.container(horizontal=True):
         for name, metrics in result["results"].items():
-            st.markdown(f"### {name}")
-            col1, col2, col3 = st.columns(3)
-            col1.metric("MAE", f"{metrics['MAE']:.2f}")
-            col2.metric("RMSE", f"{metrics['RMSE']:.2f}")
-            col3.metric("R²", f"{metrics['R2']:.2f}")
+            with st.container(border=True):
+                st.markdown(f"**{name}**")
+                st.metric("RMSE", f"{metrics['RMSE']:.2f}")
+                st.caption(
+                    f"MAE {metrics['MAE']:.2f} · R² {metrics['R2']:.2f}"
+                )
 
 
 def main():
-    st.title("Data Intelligence System")
-    st.caption("Upload a CSV dataset or use the default student dataset")
-
-    uploaded_file = st.file_uploader("Upload CSV data", type=["csv"])
+    uploaded_file = render_brand_sidebar()
     data = load_data_from_source(uploaded_file)
+    render_sidebar_status(data, uploaded_file)
 
     if data is None:
+        render_welcome()
         return
 
-    tabs = st.tabs(["Overview", "Profile", "Quality", "EDA", "Model"])
+    st.caption("DATA INTELLIGENCE WORKSPACE")
+    st.title("Dataset intelligence", icon=":material/insights:")
+    st.caption(
+        "A clear view of your data’s structure, quality, patterns, and potential."
+    )
 
-    with tabs[0]:
+    overview_tab, profile_tab, quality_tab, eda_tab, model_tab = st.tabs(
+        [
+            ":material/space_dashboard: Overview",
+            ":material/table_chart: Profile",
+            ":material/verified: Quality",
+            ":material/query_stats: Explore",
+            ":material/online_prediction: Model",
+        ]
+    )
+
+    with overview_tab:
         render_overview(data)
 
-    with tabs[1]:
+    with profile_tab:
         render_profile(data)
 
-    with tabs[2]:
+    with quality_tab:
         render_quality(data)
 
-    with tabs[3]:
+    with eda_tab:
         render_eda(data)
 
-    with tabs[4]:
+    with model_tab:
         render_modeling(data)
 
 
