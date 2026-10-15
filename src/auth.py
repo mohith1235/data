@@ -1,4 +1,5 @@
 import json
+import socket
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlsplit
 from urllib.request import Request, urlopen
@@ -73,6 +74,13 @@ def _request(config, endpoint, payload, access_token=None, method="POST"):
         )
         raise SupabaseAuthError(str(message)) from exc
     except URLError as exc:
+        if isinstance(exc.reason, socket.gaierror):
+            hostname = urlsplit(config["url"]).hostname
+            raise SupabaseAuthError(
+                f"Could not resolve Supabase host `{hostname}`. Verify that "
+                "Streamlit Cloud's `[supabase].url` exactly matches your "
+                "Supabase Project URL, then save the secrets and reboot the app."
+            ) from exc
         raise SupabaseAuthError(
             f"Could not reach Supabase: {exc.reason}"
         ) from exc

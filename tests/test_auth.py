@@ -1,8 +1,9 @@
 import io
 import json
+import socket
 import unittest
 from pathlib import Path
-from urllib.error import HTTPError
+from urllib.error import HTTPError, URLError
 from unittest.mock import patch
 
 from streamlit.testing.v1 import AppTest
@@ -119,6 +120,17 @@ class SupabaseAuthTests(unittest.TestCase):
             "Invalid login credentials",
         ):
             sign_in(self.config, "user@example.com", "wrong-password")
+
+    @patch(
+        "src.auth.urlopen",
+        side_effect=URLError(socket.gaierror(-2, "Name or service not known")),
+    )
+    def test_dns_errors_show_the_supabase_host_to_verify(self, _urlopen_mock):
+        with self.assertRaisesRegex(
+            SupabaseAuthError,
+            r"Could not resolve Supabase host `example\.supabase\.co`",
+        ):
+            sign_in(self.config, "user@example.com", "password")
 
 
 class AuthenticationScreenTests(unittest.TestCase):
